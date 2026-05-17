@@ -6,3 +6,6 @@ pytest==8.3.3
 
 # HTTP client (used by the dependency validator and useful for smoke tests)
 requests==2.32.3
+
+# Production WSGI server (used in Docker, not locally)
+gunicorn==23.0.0
