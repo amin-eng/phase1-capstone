@@ -1,0 +1,65 @@
+# docker-compose.yml
+# Two services: the Flask API and a PostgreSQL database.
+# Run with:    docker compose up --build
+# Stop with:   docker compose down
+
+services:
+  # ----------------------------------------------------------
+  # PostgreSQL database
+  # ----------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: capstone-db
+    environment:
+      POSTGRES_USER: capstone
+      POSTGRES_PASSWORD: capstone_dev_password
+      POSTGRES_DB: capstone
+    volumes:
+      # Named volume — data survives 'docker compose down'.
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # 'pg_isready' is the canonical way to test if Postgres is up.
+      test: ["CMD-SHELL", "pg_isready -U capstone -d capstone"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - backend
+
+  # ----------------------------------------------------------
+  # Flask API (built from our Dockerfile)
+  # ----------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: capstone-api
+    environment:
+      # 'db' is the hostname Compose gives our PostgreSQL service.
+      # Compose's internal DNS makes this resolve automatically.
+      DATABASE_URL: postgresql://capstone:capstone_dev_password@db:5432/capstone
+    ports:
+      - "5000:5000"
+    depends_on:
+      # Wait until Postgres is healthy before starting the API.
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "python -m scripts.init_db &&
+             gunicorn --bind 0.0.0.0:5000 --workers 2 'app.main:create_app()'"
+    networks:
+      - backend
+
+# ----------------------------------------------------------
+# Named volume — persists DB data across restarts
+# ----------------------------------------------------------
+volumes:
+  postgres_data:
+
+# ----------------------------------------------------------
+# Private network — both services join it; nothing outside can.
+# ----------------------------------------------------------
+networks:
+  backend:
+    driver: bridge
