@@ -13,12 +13,14 @@ from app.main import create_app
 # ----------------------------------------------------------------------
 @pytest.fixture
 def client():
-    """Build a fresh app and yield its test client for one test."""
-    app = create_app()
+    """Build a fresh app with an in-memory SQLite DB, create tables, yield client."""
+    from app.main import db
+    app = create_app(database_uri="sqlite:///:memory:")
     app.config["TESTING"] = True
+    with app.app_context():
+        db.create_all()
     with app.test_client() as test_client:
         yield test_client
-
 
 # ----------------------------------------------------------------------
 # /health

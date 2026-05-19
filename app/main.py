@@ -1,27 +1,63 @@
 """
-Phase 1 Capstone — Flask REST API.
+Phase 1 Capstone — Flask REST API with PostgreSQL.
 
-Three endpoints:
+Three endpoints (same as before, now backed by a real database):
   GET  /health   -> liveness probe
   GET  /users    -> list all users
   POST /users    -> create a new user
-
-Users are kept in memory for now. We'll move to PostgreSQL in Step 8.
 """
 
+import os
 from flask import Flask, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
 
 
-def create_app() -> Flask:
+# SQLAlchemy lives at module level but stays uninitialised until create_app()
+# is called. This pattern is called "deferred initialisation".
+db = SQLAlchemy()
+
+
+class User(db.Model):
     """
-    App factory. Returns a fresh Flask app with isolated state.
-    Tests use this to get a clean app per test.
+    The User table. SQLAlchemy reads this class and creates the table for us.
+    """
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+
+    def to_dict(self) -> dict:
+        """Turn a User row into a JSON-friendly dict."""
+        return {"id": self.id, "name": self.name, "email": self.email}
+
+
+def create_app(database_uri: str | None = None) -> Flask:
+    """
+    App factory. Builds a fresh Flask app.
+
+    The database_uri argument lets tests pass in an in-memory SQLite URL
+    while production reads from the DATABASE_URL environment variable.
     """
     app = Flask(__name__)
 
-    # State lives inside the factory so each app instance has its own.
-    users: list[dict] = []
-    counter = {"next_id": 1}  # dict so we can mutate it inside closures
+    # Configuration. Order of precedence:
+    #   1. Argument passed to create_app() (used by tests)
+    #   2. DATABASE_URL env var (used in Docker Compose and production)
+    #   3. Fallback to in-memory SQLite (so the app still boots in weird cases)
+    app.config["SQLALCHEMY_DATABASE_URI"] = (
+        database_uri
+        or os.environ.get("DATABASE_URL")
+        or "sqlite:///:memory:"
+    )
+    # This setting suppresses a warning and saves memory. Always set it to False.
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+    # Bind the SQLAlchemy instance to this app.
+    db.init_app(app)
+
+
+    # ------------------ Routes ------------------
 
     @app.route("/health", methods=["GET"])
     def health():
@@ -30,8 +66,9 @@ def create_app() -> Flask:
 
     @app.route("/users", methods=["GET"])
     def list_users():
-        """Return the full list of users."""
-        return jsonify(users), 200
+        """Return all users from the database."""
+        users = User.query.all()
+        return jsonify([u.to_dict() for u in users]), 200
 
     @app.route("/users", methods=["POST"])
     def create_user():
@@ -41,20 +78,19 @@ def create_app() -> Flask:
         if not data or "name" not in data or "email" not in data:
             return jsonify({"error": "name and email are required"}), 400
 
-        new_user = {
-            "id": counter["next_id"],
-            "name": data["name"],
-            "email": data["email"],
-        }
-        users.append(new_user)
-        counter["next_id"] += 1
+        # Reject duplicate emails up front (cleaner error than DB constraint).
+        if User.query.filter_by(email=data["email"]).first() is not None:
+            return jsonify({"error": "email already exists"}), 409
 
-        return jsonify(new_user), 201
+        user = User(name=data["name"], email=data["email"])
+        db.session.add(user)
+        db.session.commit()
+
+        return jsonify(user.to_dict()), 201
 
     return app
 
 
 if __name__ == "__main__":
-    # When run directly, build one app and serve it.
     app = create_app()
     app.run(host="0.0.0.0", port=5000, debug=True)
