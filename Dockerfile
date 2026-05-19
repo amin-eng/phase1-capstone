@@ -51,7 +51,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 # --chown sets ownership in one step (faster than RUN chown).
 # ------------------------------------------------------------------
 COPY --chown=app:app app/ ./app/
-
+COPY --chown=app:app scripts/ ./scripts/
 # ------------------------------------------------------------------
 # Switch to the non-root user for everything that follows.
 # ------------------------------------------------------------------
