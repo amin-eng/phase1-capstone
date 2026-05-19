@@ -9,3 +9,8 @@ requests==2.32.3
 
 # Production WSGI server (used in Docker, not locally)
 gunicorn==23.0.0
+
+# Database
+SQLAlchemy==2.0.36
+Flask-SQLAlchemy==3.1.1
+psycopg2-binary==2.9.10
