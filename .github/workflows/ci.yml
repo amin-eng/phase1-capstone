@@ -1,0 +1,114 @@
+# .github/workflows/ci.yml
+# Phase 1 Capstone CI pipeline.
+# Runs on every push to main and every pull request targeting main.
+
+name: CI
+
+# ────────────────────────────────────────────────────────────────────
+# When does this workflow run?
+# ────────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# ────────────────────────────────────────────────────────────────────
+# Jobs
+# ────────────────────────────────────────────────────────────────────
+jobs:
+  build-and-test:
+    name: Build and test
+    # 'runs-on' picks the machine type. ubuntu-latest is free and fast.
+    runs-on: ubuntu-latest
+
+    steps:
+      # ──────────────────────────────────────────────────────────────
+      # Step 1 — Clone the repo
+      # actions/checkout is the standard first step of nearly every workflow.
+      # ──────────────────────────────────────────────────────────────
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # ──────────────────────────────────────────────────────────────
+      # Step 2 — Install Python
+      # We pin the SAME version we use in the Dockerfile and locally.
+      # ──────────────────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip                    # cache pip downloads between runs
+
+      # ──────────────────────────────────────────────────────────────
+      # Step 3 — Install Python dependencies
+      # ──────────────────────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ──────────────────────────────────────────────────────────────
+      # Step 4 — Verify the dependency manifest matches what got installed
+      # (Reuses the script you wrote in Step 5 — exercises shift-left.)
+      # ──────────────────────────────────────────────────────────────
+      - name: Verify dependency versions
+        run: python scripts/check_deps.py
+
+      # ──────────────────────────────────────────────────────────────
+      # Step 5 — Run unit tests
+      # If this fails the rest of the job is skipped (CI fails early).
+      # ──────────────────────────────────────────────────────────────
+      - name: Run pytest
+        run: pytest -v
+
+      # ──────────────────────────────────────────────────────────────
+      # Step 6 — Build the Docker image
+      # Note: GitHub Actions runners already have Docker installed.
+      # ──────────────────────────────────────────────────────────────
+      - name: Build Docker image
+        run: docker build -t phase1-capstone:ci .
+
+      # ──────────────────────────────────────────────────────────────
+      # Step 7 — Smoke test the stack
+      # Bring up Postgres + API via docker compose, hit /health.
+      # If the container can't serve a single request, the build fails.
+      # ──────────────────────────────────────────────────────────────
+      - name: Start the stack
+        run: docker compose up -d --build
+
+      - name: Wait for API to be healthy
+        run: |
+          echo "Waiting up to 60s for the API to respond..."
+          for i in {1..30}; do
+            if curl -fsS http://localhost:5000/health >/dev/null; then
+              echo "✅ API is up after ${i}*2s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "❌ API never became healthy. Dumping logs:"
+          docker compose ps
+          docker compose logs
+          exit 1
+
+      - name: Smoke test the endpoints
+        run: |
+          echo "--- /health ---"
+          curl -fsS http://localhost:5000/health
+          echo
+          echo "--- POST /users ---"
+          curl -fsS -X POST http://localhost:5000/users \
+            -H "Content-Type: application/json" \
+            -d '{"name":"CI Test","email":"ci@example.com"}'
+          echo
+          echo "--- GET /users ---"
+          curl -fsS http://localhost:5000/users
+          echo
+
+      # ──────────────────────────────────────────────────────────────
+      # Step 8 — Clean up (runs even on failure, for tidiness)
+      # ──────────────────────────────────────────────────────────────
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v
